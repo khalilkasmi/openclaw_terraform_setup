@@ -47,8 +47,8 @@ aws ssm start-session --target <instance-id> --region eu-central-1
 # The instance will appear in your Tailnet with the configured hostname
 ssh openclaw@<tailscale-hostname>
 
-# 7. Switch to openclaw user and run onboarding (if using SSM)
-sudo su - openclaw
+# 7. Install openclaw and run onboarding
+curl -fsSL https://openclaw.ai/install.sh | bash
 openclaw onboard
 ```
 
