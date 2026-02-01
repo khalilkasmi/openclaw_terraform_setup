@@ -1,0 +1,57 @@
+# OpenClaw Terraform Variables Example
+# Copy this file to terraform.tfvars and fill in your values
+# NEVER commit terraform.tfvars to version control (it may contain secrets)
+
+# -----------------------------------------------------------------------------
+# API KEYS
+# -----------------------------------------------------------------------------
+
+# Required: Your Anthropic API key
+anthropic_api_key = "sk-ant-xxxxx"
+
+# Optional: OpenAI API key (if you want to use GPT models)
+# openai_api_key = "sk-xxxxx"
+
+# -----------------------------------------------------------------------------
+# TAILSCALE (Recommended for secure access)
+# -----------------------------------------------------------------------------
+
+# Enable Tailscale for secure remote access
+enable_tailscale = true
+
+# Get your auth key from: https://login.tailscale.com/admin/settings/keys
+# Create a "Reusable" and "Ephemeral" key for best security
+tailscale_auth_key = "tskey-auth-xxxxx"
+
+# Hostname in your Tailnet (default: "openclaw")
+# tailscale_hostname = "openclaw"
+
+# -----------------------------------------------------------------------------
+# AWS CONFIGURATION
+# -----------------------------------------------------------------------------
+
+# AWS Region (default: eu-central-1)
+# aws_region = "eu-central-1"
+
+# Instance type (t2.micro for free tier)
+# instance_type = "t2.micro"
+
+# Root volume size in GB
+# root_volume_size = 20
+
+# -----------------------------------------------------------------------------
+# OPTIONAL: DIRECT SSH ACCESS (not recommended if using Tailscale)
+# -----------------------------------------------------------------------------
+
+# Enable direct SSH access (disabled by default when using Tailscale)
+# enable_ssh_access = false
+
+# If enabling SSH, restrict to your IP
+# ssh_allowed_cidr = "1.2.3.4/32"
+
+# -----------------------------------------------------------------------------
+# DOCKER SANDBOXING
+# -----------------------------------------------------------------------------
+
+# Enable Docker sandboxing for OpenClaw sessions (recommended)
+# enable_docker_sandbox = true
