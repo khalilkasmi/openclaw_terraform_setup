@@ -131,7 +131,6 @@ Tailscale provides:
 
 | Name | Description | Default |
 |------|-------------|---------|
-| `enable_docker_sandbox` | Enable Docker sandboxing | `true` |
 | `openclaw_user` | Linux user for OpenClaw | `openclaw` |
 
 ### Other

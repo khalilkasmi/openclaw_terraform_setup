@@ -53,10 +53,3 @@ enable_tailscale = true
 
 # If enabling SSH, restrict to your IP (NEVER use 0.0.0.0/0)
 # ssh_allowed_cidr = "YOUR_IP/32"
-
-# -----------------------------------------------------------------------------
-# DOCKER SANDBOXING
-# -----------------------------------------------------------------------------
-
-# Enable Docker sandboxing for OpenClaw sessions (recommended)
-# enable_docker_sandbox = true
