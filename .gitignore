@@ -20,18 +20,39 @@ Thumbs.db
 .settings/
 
 # Terraform
-.terraform*
+.terraform/
+.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfplan
 *.tfvars
+!terraform.tfvars.example
 *.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+crash.log
 
 # SSH keys
 *.pem
 *.key
 id_rsa*
 *.ppk
+*.pub
+
+# Secrets and credentials (common patterns)
+*secret*
+*credential*
+*.secret
+.secrets/
+secrets/
+**/secrets/**
+*.credentials
+credentials.json
+service-account*.json
 
 # Logs
 *.log

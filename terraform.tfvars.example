@@ -1,16 +1,9 @@
 # OpenClaw Terraform Variables Example
 # Copy this file to terraform.tfvars and fill in your values
 # NEVER commit terraform.tfvars to version control (it may contain secrets)
-
-# -----------------------------------------------------------------------------
-# API KEYS
-# -----------------------------------------------------------------------------
-
-# Required: Your Anthropic API key
-anthropic_api_key = "sk-ant-xxxxx"
-
-# Optional: OpenAI API key (if you want to use GPT models)
-# openai_api_key = "sk-xxxxx"
+#
+# RECOMMENDED: Use environment variables for sensitive values:
+#   export TF_VAR_tailscale_auth_key="tskey-auth-YOUR_KEY_HERE"
 
 # -----------------------------------------------------------------------------
 # TAILSCALE (Recommended for secure access)
@@ -21,7 +14,9 @@ enable_tailscale = true
 
 # Get your auth key from: https://login.tailscale.com/admin/settings/keys
 # Create a "Reusable" and "Ephemeral" key for best security
-tailscale_auth_key = "tskey-auth-xxxxx"
+# REQUIRED: Set via TF_VAR_tailscale_auth_key environment variable (recommended)
+# or uncomment and set the value below (less secure)
+# tailscale_auth_key = ""
 
 # Hostname in your Tailnet (default: "openclaw")
 # tailscale_hostname = "openclaw"
@@ -33,11 +28,21 @@ tailscale_auth_key = "tskey-auth-xxxxx"
 # AWS Region (default: eu-central-1)
 # aws_region = "eu-central-1"
 
-# Instance type (t2.micro for free tier)
-# instance_type = "t2.micro"
+# Instance type (t2.micro for free tier, t3.small recommended)
+# instance_type = "t3.small"
 
 # Root volume size in GB
 # root_volume_size = 20
+
+# -----------------------------------------------------------------------------
+# SECURITY CONFIGURATION (Recommended for production)
+# -----------------------------------------------------------------------------
+
+# Enable VPC Flow Logs for network visibility and security monitoring
+# enable_vpc_flow_logs = true
+
+# Enable termination protection for production instances
+# termination_protection = true
 
 # -----------------------------------------------------------------------------
 # OPTIONAL: DIRECT SSH ACCESS (not recommended if using Tailscale)
@@ -46,8 +51,8 @@ tailscale_auth_key = "tskey-auth-xxxxx"
 # Enable direct SSH access (disabled by default when using Tailscale)
 # enable_ssh_access = false
 
-# If enabling SSH, restrict to your IP
-# ssh_allowed_cidr = "1.2.3.4/32"
+# If enabling SSH, restrict to your IP (NEVER use 0.0.0.0/0)
+# ssh_allowed_cidr = "YOUR_IP/32"
 
 # -----------------------------------------------------------------------------
 # DOCKER SANDBOXING

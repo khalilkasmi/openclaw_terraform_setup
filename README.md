@@ -7,18 +7,19 @@ Terraform module to deploy [OpenClaw](https://openclaw.ai) in a hardened AWS env
 - **No inbound ports** - Instance has no SSH or other ports open from the internet (by default)
 - **Tailscale VPN** - Optional secure remote access via Tailscale (recommended)
 - **SSM Session Manager** - Access via IAM-authenticated, audited sessions
-- **Encrypted storage** - EBS volume encryption enabled
+- **Encrypted storage** - EBS volume encryption enabled by default
 - **IMDSv2 required** - Protection against SSRF attacks
-- **Docker sandboxing** - OpenClaw sessions run in isolated containers
-- **Dedicated user** - OpenClaw runs as non-root user
-- **Session logging** - All SSM sessions logged to CloudWatch
-- **Kernel hardening** - Security sysctl parameters applied
+- **Session logging** - All SSM sessions logged to encrypted CloudWatch logs
+- **KMS encryption** - CloudWatch logs encrypted with customer-managed KMS key
+- **VPC Flow Logs** - Optional network traffic monitoring (enable with `enable_vpc_flow_logs`)
+- **RFC 1918 networking** - Private IP ranges used to avoid routing conflicts
 
 ## Prerequisites
 
 - AWS CLI configured with appropriate credentials
 - Terraform >= 1.0
 - AWS Session Manager plugin installed ([install guide](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html))
+- Tailscale (Free tier is enough)
 
 ## Quick Start
 
@@ -28,7 +29,7 @@ cd terraform
 
 # 2. Create your variables file
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your API keys
+# Edit terraform.tfvars with your Tailscale auth key
 
 # 3. Initialize Terraform
 terraform init
@@ -45,7 +46,7 @@ aws ssm start-session --target <instance-id> --region eu-central-1
 
 # Option B: Via Tailscale (if enabled)
 # The instance will appear in your Tailnet with the configured hostname
-ssh openclaw@<tailscale-hostname>
+ssh ec2-user@<tailscale-hostname>
 
 # 7. Install openclaw and run onboarding
 curl -fsSL https://openclaw.ai/install.sh | bash
@@ -75,7 +76,7 @@ If you enabled Tailscale during deployment:
 2. Find the instance in your Tailscale admin console: https://login.tailscale.com/admin/machines
 3. Connect via SSH using the configured hostname (default: `openclaw`):
    ```bash
-   ssh openclaw@openclaw
+   ssh ec2-user@openclaw
    ```
 
 Tailscale provides:
@@ -106,12 +107,6 @@ Tailscale provides:
 
 ## Variables
 
-### Required
-
-| Name | Description | Default |
-|------|-------------|---------|
-| `anthropic_api_key` | Anthropic API key for Claude models | (required) |
-
 ### AWS Configuration
 
 | Name | Description | Default |
@@ -130,15 +125,13 @@ Tailscale provides:
 | `tailscale_auth_key` | Tailscale auth key | (required if enabled) |
 | `tailscale_hostname` | Hostname in Tailnet | `openclaw` |
 | `enable_ssh_access` | Enable direct SSH access | `false` |
-| `ssh_allowed_cidr` | CIDR allowed to SSH | `0.0.0.0/0` |
-| `ssh_key_name` | Existing EC2 key pair name | `""` |
+| `ssh_allowed_cidr` | CIDR allowed to SSH (required if SSH enabled) | `""` |
 
 ### OpenClaw Configuration
 
 | Name | Description | Default |
 |------|-------------|---------|
 | `enable_docker_sandbox` | Enable Docker sandboxing | `true` |
-| `openai_api_key` | OpenAI API key (optional) | `""` |
 | `openclaw_user` | Linux user for OpenClaw | `openclaw` |
 
 ### Other
@@ -147,8 +140,9 @@ Tailscale provides:
 |------|-------------|---------|
 | `log_retention_days` | CloudWatch log retention | `30` |
 | `termination_protection` | Enable termination protection | `false` |
-| `vpc_cidr` | VPC CIDR block | `20.0.0.0/16` |
-| `public_subnet_cidr` | Public subnet CIDR | `20.0.1.0/24` |
+| `enable_vpc_flow_logs` | Enable VPC flow logs for monitoring | `false` |
+| `vpc_cidr` | VPC CIDR block (RFC 1918) | `10.0.0.0/16` |
+| `public_subnet_cidr` | Public subnet CIDR | `10.0.1.0/24` |
 
 See `variables.tf` for detailed descriptions and validation rules.
 
@@ -173,8 +167,8 @@ See `variables.tf` for detailed descriptions and validation rules.
 │  │   │   │         Session Isolation            │  │     │  │
 │  │   │   └──────────────────────────────────────┘  │     │  │
 │  │   │                                              │     │  │
-│  │   │   Security Group: NO INBOUND RULES          │     │  │
-│  │   │   Outbound: HTTPS, HTTP, DNS only           │     │  │
+│  │   │   Security Group: NO INBOUND (by default)   │     │  │
+│  │   │   Outbound: ALL traffic (for flexibility)   │     │  │
 │  │   └─────────────────────────────────────────────┘     │  │
 │  │                         │                              │  │
 │  └─────────────────────────│──────────────────────────────┘  │
@@ -199,14 +193,37 @@ terraform destroy
 
 ## Security Considerations
 
-1. **API Keys**: Store in `terraform.tfvars` (gitignored) or use AWS Secrets Manager
-2. **Tailscale Setup**: 
+1. **Secrets Management**:
+   - NEVER commit `terraform.tfvars` to version control (it is gitignored)
+   - Use environment variables for sensitive values: `export TF_VAR_tailscale_auth_key="tskey-auth-..."`
+   - Consider using AWS Secrets Manager or HashiCorp Vault for production secrets
+   - Rotate Tailscale auth keys regularly
+
+2. **Tailscale Setup**:
    - Get auth key from https://login.tailscale.com/admin/settings/keys
    - Create a "Reusable" and "Ephemeral" key for best security
    - The instance will automatically join your Tailnet on first boot
-3. **Free Tier Limits**: t2.micro has 1GB RAM - may struggle with heavy workloads. Consider t3.small for better performance.
-4. **Egress Traffic**: Instance can reach the internet for integrations - monitor CloudWatch logs
-5. **Session Access**: 
+   - Enable Tailscale ACLs to restrict access
+
+3. **Production Hardening**:
+   - Enable `enable_vpc_flow_logs = true` for network monitoring (enabled by default)
+   - Enable `termination_protection = true` to prevent accidental deletion
+   - Use `environment = "prod"` for detailed CloudWatch monitoring
+   - Review and restrict IAM policies for SSM access
+
+4. **Free Tier Limits**: t2.micro has 1GB RAM - may struggle with heavy workloads. Consider t3.small for better performance.
+
+5. **Egress Traffic**: Instance can reach the internet for integrations - monitor CloudWatch logs and VPC Flow Logs
+
+6. **Session Access**:
    - SSM: Anyone with IAM permissions can start SSM sessions - use IAM policies to restrict
    - Tailscale: Only devices in your Tailnet can access the instance
-6. **SSH Access**: Only enable `enable_ssh_access` for debugging. Use Tailscale or SSM for regular access.
+   - All sessions are logged to encrypted CloudWatch logs
+
+7. **SSH Access**: Only enable `enable_ssh_access` for debugging. Use Tailscale or SSM for regular access. NEVER use 0.0.0.0/0 for ssh_allowed_cidr.
+
+8. **Regular Security Tasks**:
+   - Review CloudWatch logs and VPC Flow Logs regularly
+   - Keep the instance updated: `sudo dnf update -y`
+   - Rotate credentials and access keys periodically
+   - Review Terraform state for sensitive data exposure

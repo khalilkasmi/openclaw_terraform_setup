@@ -1,8 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+# Redirect all output to log file while also showing on console
 exec > >(tee /var/log/openclaw-setup.log) 2>&1
+
 echo "=== OpenClaw Setup Started: $(date) ==="
+
+# Use IMDSv2 for metadata access (more secure)
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+echo ">>> Instance ID: $(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id || echo 'unknown')"
+echo ">>> Region: $(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region || echo 'unknown')"
 
 # -----------------------------------------------------------------------------
 # TAILSCALE FIRST (for immediate SSH access)
@@ -11,8 +18,10 @@ echo "=== OpenClaw Setup Started: $(date) ==="
 %{ if enable_tailscale ~}
 echo ">>> Installing Tailscale (priority)..."
 
-# Install Tailscale
-curl -fsSL https://tailscale.com/install.sh | sh
+# Install Tailscale using official package repository (more secure than curl|sh)
+# Reference: https://tailscale.com/kb/1052/install-amazon-linux-2023
+dnf config-manager --add-repo https://pkgs.tailscale.com/stable/amazon-linux/2023/tailscale.repo
+dnf install -y tailscale
 
 # Start the service
 systemctl enable tailscaled
@@ -25,7 +34,7 @@ systemctl status tailscaled --no-pager || true
 
 %{ if tailscale_auth_key != "" ~}
 echo ">>> Authenticating Tailscale..."
-echo ">>> Using auth key: ${substr(tailscale_auth_key, 0, 15)}..."
+# Note: Auth key is not logged for security
 
 # Authenticate with Tailscale
 tailscale up \
@@ -69,48 +78,16 @@ echo ">>> Installing dependencies..."
 dnf update -y
 dnf install -y git curl
 
-# # -----------------------------------------------------------------------------
-# # OPENCLAW (official installation)
-# # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# SETUP COMPLETE
+# -----------------------------------------------------------------------------
 
-# echo ">>> Installing OpenClaw via official installer..."
+echo "=== OpenClaw Setup Completed: $(date) ==="
+echo ""
+echo "Next steps:"
+echo "  1. Connect via: ssh ec2-user@${tailscale_hostname}"
+echo "  2. Install OpenClaw: curl -fsSL https://openclaw.ai/install.sh | bash"
+echo "  3. Run onboarding: openclaw onboard"
 
-# sudo -u ec2-user bash <<'INSTALL_SCRIPT'
-# set -e
-# cd ~
-
-# # Official OpenClaw installation
-# curl -fsSL https://openclaw.ai/install.sh | bash
-
-# # Source the updated PATH
-# export PATH="$HOME/.local/bin:$PATH"
-
-# # Verify installation
-# echo ">>> OpenClaw version:"
-# openclaw --version || echo "OpenClaw may need 'openclaw onboard' to complete setup"
-# INSTALL_SCRIPT
-
-# echo ">>> OpenClaw installed for ec2-user"
-
-# # -----------------------------------------------------------------------------
-# # API KEYS
-# # -----------------------------------------------------------------------------
-
-# %{ if anthropic_api_key != "" ~}
-# echo ">>> Configuring Anthropic API key..."
-# sudo -u ec2-user bash -c 'grep -q ANTHROPIC_API_KEY ~/.bashrc || echo "export ANTHROPIC_API_KEY=\"${anthropic_api_key}\"" >> ~/.bashrc'
-# %{ endif ~}
-
-# %{ if openai_api_key != "" ~}
-# echo ">>> Configuring OpenAI API key..."
-# sudo -u ec2-user bash -c 'grep -q OPENAI_API_KEY ~/.bashrc || echo "export OPENAI_API_KEY=\"${openai_api_key}\"" >> ~/.bashrc'
-# %{ endif ~}
-
-# # -----------------------------------------------------------------------------
-# # DONE
-# # -----------------------------------------------------------------------------
-
-# echo "=== OpenClaw Setup Completed: $(date) ==="
-# echo ""
-# echo "Connect via: ssh ec2-user@${tailscale_hostname}"
-# echo "Then run: openclaw onboard"
+# Create a marker file to indicate successful setup
+touch /var/log/openclaw-setup-complete

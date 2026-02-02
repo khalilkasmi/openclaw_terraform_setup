@@ -8,13 +8,9 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.0"
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
     }
   }
 }
@@ -108,6 +104,75 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# VPC Flow Logs for network visibility
+resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
+  count             = var.enable_vpc_flow_logs ? 1 : 0
+  name              = "/openclaw/${var.environment}/vpc-flow-logs"
+  retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.openclaw_logs.arn
+
+  tags = {
+    Name = "${var.project_name}-vpc-flow-logs"
+  }
+}
+
+resource "aws_iam_role" "vpc_flow_logs" {
+  count       = var.enable_vpc_flow_logs ? 1 : 0
+  name_prefix = "${var.project_name}-vpc-flow-logs-"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "vpc-flow-logs.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.project_name}-vpc-flow-logs-role"
+  }
+}
+
+resource "aws_iam_role_policy" "vpc_flow_logs" {
+  count       = var.enable_vpc_flow_logs ? 1 : 0
+  name_prefix = "${var.project_name}-vpc-flow-logs-"
+  role        = aws_iam_role.vpc_flow_logs[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "${aws_cloudwatch_log_group.vpc_flow_logs[0].arn}:*"
+      }
+    ]
+  })
+}
+
+resource "aws_flow_log" "vpc" {
+  count                    = var.enable_vpc_flow_logs ? 1 : 0
+  iam_role_arn             = aws_iam_role.vpc_flow_logs[0].arn
+  log_destination          = aws_cloudwatch_log_group.vpc_flow_logs[0].arn
+  traffic_type             = "ALL"
+  vpc_id                   = aws_vpc.openclaw.id
+  max_aggregation_interval = 60
+
+  tags = {
+    Name = "${var.project_name}-vpc-flow-log"
+  }
+}
+
 # -----------------------------------------------------------------------------
 # SECURITY GROUPS
 # -----------------------------------------------------------------------------
@@ -129,14 +194,32 @@ resource "aws_security_group" "openclaw_instance" {
 
 # SSH inbound rule (conditional - for debugging)
 resource "aws_security_group_rule" "ssh_inbound" {
-  count             = var.enable_ssh_access ? 1 : 0
+  count             = var.enable_ssh_access && var.ssh_allowed_cidr != "" ? 1 : 0
   type              = "ingress"
   from_port         = 22
   to_port           = 22
   protocol          = "tcp"
   cidr_blocks       = [var.ssh_allowed_cidr]
   security_group_id = aws_security_group.openclaw_instance.id
-  description       = "SSH access for debugging"
+  description       = "SSH access for debugging from ${var.ssh_allowed_cidr}"
+}
+
+# Validation to ensure SSH CIDR is provided when SSH is enabled
+resource "null_resource" "ssh_cidr_validation" {
+  count = var.enable_ssh_access && var.ssh_allowed_cidr == "" ? 1 : 0
+
+  provisioner "local-exec" {
+    command = "echo 'ERROR: ssh_allowed_cidr must be set when enable_ssh_access is true' && exit 1"
+  }
+}
+
+# Validation to ensure Tailscale auth key is provided when Tailscale is enabled
+resource "null_resource" "tailscale_auth_validation" {
+  count = var.enable_tailscale && var.tailscale_auth_key == "" ? 1 : 0
+
+  provisioner "local-exec" {
+    command = "echo 'ERROR: tailscale_auth_key must be set when enable_tailscale is true. Use TF_VAR_tailscale_auth_key environment variable.' && exit 1"
+  }
 }
 
 # Outbound: Allow ALL traffic (simpler and more reliable)
@@ -208,43 +291,106 @@ resource "aws_iam_instance_profile" "openclaw" {
 }
 
 # -----------------------------------------------------------------------------
+# KMS KEY FOR LOG ENCRYPTION
+# -----------------------------------------------------------------------------
+
+resource "aws_kms_key" "openclaw_logs" {
+  description             = "KMS key for OpenClaw CloudWatch log encryption"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "Enable IAM Admin Permissions"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action = [
+          "kms:Create*",
+          "kms:Describe*",
+          "kms:Enable*",
+          "kms:List*",
+          "kms:Put*",
+          "kms:Update*",
+          "kms:Revoke*",
+          "kms:Disable*",
+          "kms:Get*",
+          "kms:Delete*",
+          "kms:TagResource",
+          "kms:UntagResource",
+          "kms:ScheduleKeyDeletion",
+          "kms:CancelKeyDeletion"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow Key Usage for Encryption"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:CallerAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+      {
+        Sid    = "Allow CloudWatch Logs"
+        Effect = "Allow"
+        Principal = {
+          Service = "logs.${var.aws_region}.amazonaws.com"
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/openclaw/*"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.project_name}-logs-key"
+  }
+}
+
+resource "aws_kms_alias" "openclaw_logs" {
+  name          = "alias/${var.project_name}-logs"
+  target_key_id = aws_kms_key.openclaw_logs.key_id
+}
+
+# -----------------------------------------------------------------------------
 # CLOUDWATCH LOG GROUP FOR SESSION LOGGING
 # -----------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "openclaw" {
   name              = "/openclaw/${var.environment}/sessions"
   retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.openclaw_logs.arn
 
   tags = {
     Name = "${var.project_name}-logs"
   }
-}
-
-# -----------------------------------------------------------------------------
-# SSH KEY PAIR (for debugging access)
-# -----------------------------------------------------------------------------
-
-resource "tls_private_key" "openclaw" {
-  count     = var.ssh_key_name == "" ? 1 : 0
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "aws_key_pair" "openclaw" {
-  count      = var.ssh_key_name == "" ? 1 : 0
-  key_name   = "${var.project_name}-key"
-  public_key = tls_private_key.openclaw[0].public_key_openssh
-
-  tags = {
-    Name = "${var.project_name}-key"
-  }
-}
-
-resource "local_file" "private_key" {
-  count           = var.ssh_key_name == "" ? 1 : 0
-  content         = tls_private_key.openclaw[0].private_key_pem
-  filename        = "${path.module}/openclaw-key.pem"
-  file_permission = "0600"
 }
 
 # -----------------------------------------------------------------------------
@@ -257,7 +403,6 @@ resource "aws_instance" "openclaw" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.openclaw_instance.id]
   iam_instance_profile   = aws_iam_instance_profile.openclaw.name
-  key_name               = var.ssh_key_name != "" ? var.ssh_key_name : aws_key_pair.openclaw[0].key_name
 
   # Encrypted root volume
   root_block_device {
@@ -274,16 +419,15 @@ resource "aws_instance" "openclaw" {
   # Disable IMDSv1 (require IMDSv2 for better security)
   metadata_options {
     http_endpoint               = "enabled"
-    http_tokens                 = "required"  # Require IMDSv2
-    http_put_response_hop_limit = 2  # Allow for Docker containers
+    http_tokens                 = "required" # Require IMDSv2
+    http_put_response_hop_limit = 2          # Allow for Docker containers
   }
 
-  # Enable detailed monitoring (free tier includes basic)
-  monitoring = false
+  # Enable detailed monitoring for better security visibility
+  # Note: Basic monitoring is free, detailed monitoring has additional costs
+  monitoring = var.environment == "prod" ? true : false
 
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
-    anthropic_api_key  = var.anthropic_api_key
-    openai_api_key     = var.openai_api_key
     enable_tailscale   = var.enable_tailscale
     tailscale_auth_key = var.tailscale_auth_key
     tailscale_hostname = var.tailscale_hostname
@@ -303,7 +447,7 @@ resource "aws_instance" "openclaw" {
   ]
 
   lifecycle {
-    ignore_changes = [ami]  # Don't recreate on AMI updates
+    ignore_changes = [ami] # Don't recreate on AMI updates
   }
 }
 
